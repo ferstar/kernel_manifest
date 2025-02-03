@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-export CONFIG="gt5pro"
+export CONFIG="oneplus12"
 export REPO_PATH="$PWD/git-repo/repo"
 export ANYKERNEL_BRANCH="android14-6.1"
 export SUSFS_BRANCH="gki-android14-6.1"
