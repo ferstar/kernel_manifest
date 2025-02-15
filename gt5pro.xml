@@ -3,17 +3,17 @@
   <remote fetch="https://git.codelinaro.org/clo/la" name="clo-la"/>
   <default remote="clo-la" revision="dummy_revision" sync-c="true" sync-tags="false"/>
   <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
-  <remote fetch="https://github.com/realme-kernel-opensource" name="realme"/>
+  <remote fetch="https://github.com/oppo-source" name="oppo"/>
   <project remote="origin" name="android_kernel_common_oneplus_sm8650" path="kernel_platform/common" revision="oneplus/sm8650_v_15.0.0_oneplus_ace5" clone-depth="1">
     <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>
   </project>
-  <project remote="realme" name="realme_GT5pro-AndroidV-kernel-source" path="kernel_platform/msm-kernel" revision="master" clone-depth="1">
-    <linkfile dest="kernel_platform/WORKSPACE" src="bazel.WORKSPACE"/>
-    <linkfile dest="kernel_platform/build_with_bazel.py" src="build_with_bazel.py"/>
-  </project>
-  <project remote="realme" name="realme_GT5pro-AndroidV-vendor-source" path="./" revision="master" clone-depth="1"/>
+  <project remote="oppo" name="android_kernel_modules_and_devicetree_oppo_sm8650" path="./" revision="oppo/sm8650_v_15.0.0_find_x7_ultra" clone-depth="1"/>
   <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="d153b7ab4a4956198957e258d4f370e875c53059" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
     <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
+  </project>
+  <project remote="oppo" name="android_kernel_oppo_sm8650" path="kernel_platform/msm-kernel" revision="oppo/sm8650_v_15.0.0_find_x7_ultra" clone-depth="1">
+    <linkfile dest="kernel_platform/WORKSPACE" src="bazel.WORKSPACE"/>
+    <linkfile dest="kernel_platform/build_with_bazel.py" src="build_with_bazel.py"/>
   </project>
   <project remote="clo-la" name="kernel_platform/build/bazel_common_rules" path="kernel_platform/build/bazel_common_rules" revision="415b543d5e1d270a22f8c6ae9d848b3560472062" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
   <project remote="clo-la" name="kernel_platform/external/bazel-skylib" path="kernel_platform/external/bazel-skylib" revision="7fdbc462f5001b7e82f026aa90bd43c494e2a8d8" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
