@@ -27,6 +27,7 @@ cd "$WORKDIR"
 readonly MANIFEST=${MANIFEST:-gt5pro}
 readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-android16-11-o-v$(date +%Y%m%d)}
 readonly APPLY_DROIDSPACES=${APPLY_DROIDSPACES:-y}
+readonly COMMON_REV="e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7"
 readonly SKIP_DEPS=${SKIP_DEPS:-y}
 
 # 显示配置信息
@@ -92,7 +93,7 @@ if [ -d "vendor" ]; then
   git pull
   cd ..
 else
-  git clone --branch master \
+  git clone --depth 1 --branch master \
     https://github.com/realme-kernel-opensource/realme_GT5pro-AndroidB-vendor-source.git \
     vendor
 fi
@@ -110,14 +111,14 @@ if [ -d "common" ]; then
   cd common
   git reset --hard HEAD
   git clean -fdx
-  git fetch origin
-  git checkout master || git checkout -b master origin/master
-  git pull
+  git fetch --depth 1 origin "$COMMON_REV"
+  git checkout "$COMMON_REV"
   cd ..
 else
   git clone --depth 1 --branch master \
     https://github.com/realme-kernel-opensource/realme_GT5pro-AndroidB-common-source.git \
     common
+  (cd common && git fetch --depth 1 origin "$COMMON_REV" && git checkout "$COMMON_REV")
 fi
 
 echo ">>> 初始化仓库完成"
