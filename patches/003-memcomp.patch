@@ -703,7 +703,7 @@ index 8f4e02689..7bca0c673 100755
 +
 +obj-$(CONFIG_MEMCOMP) += memcomp.o
 diff --git a/mm/madvise.c b/mm/madvise.c
-index b622aa684..a6b483532 100755
+index b622aa684..11f2c5ef6 100755
 --- a/mm/madvise.c
 +++ b/mm/madvise.c
 @@ -7,6 +7,7 @@
@@ -714,7 +714,20 @@ index b622aa684..a6b483532 100755
  #include <linux/pagemap.h>
  #include <linux/syscalls.h>
  #include <linux/mempolicy.h>
-@@ -770,7 +771,11 @@ static int madvise_free_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -477,11 +478,8 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
+ 
+ 		if (!pte_present(ptent)) {
+ 			entry = pte_to_swp_entry(ptent);
+-#ifdef CONFIG_CONT_PTE_HUGEPAGE
+-			/* otherwise, swp_swapcount(entry) will report bad_file */
++			/* Only swap-backed entries have a swap count. */
+ 			if (!non_swap_entry(entry))
+-#endif
+-			if (!is_migration_entry(entry))
+ 				trace_android_vh_madvise_pageout_swap_entry(entry,
+ 					swp_swapcount(entry));
+ 			continue;
+@@ -770,7 +768,11 @@ static int madvise_free_pte_range(pmd_t *pmd, unsigned long addr,
  			swp_entry_t entry;
  
  			entry = pte_to_swp_entry(ptent);

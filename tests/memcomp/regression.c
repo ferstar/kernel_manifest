@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/klog.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
@@ -90,6 +91,23 @@ static unsigned char pattern(size_t i)
 	return i / PAGE == 1 ? 0 : 1 + (i / PAGE + i % 16) % 251;
 }
 
+static void check_compressed_pageout(unsigned char *page)
+{
+	/* Read the recent kernel log without consuming it (SYSLOG_ACTION_READ_ALL). */
+	enum { READ_ALL = 3 };
+	char log[8192];
+	uint64_t entry = pagemap(page);
+	int len;
+
+	require(!madvise(page, PAGE, MADV_PAGEOUT), "repeat pageout");
+	require(!madvise(page, PAGE, MADV_COLD), "cold on compressed page");
+	require(pagemap(page) == entry, "repeated advice preserves token");
+	len = klogctl(READ_ALL, log, sizeof(log) - 1);
+	require(len >= 0, "read kernel log after repeated advice");
+	log[len] = '\0';
+	require(!strstr(log, "Bad swap file entry"), "compressed token reached swapfile");
+	puts("PASS repeated PAGEOUT/COLD on a compressed page");
+}
 static void compressed_move_and_stats(void)
 {
 	unsigned char *src = area(), *dst = area(), vec[PAGES];
@@ -113,6 +131,7 @@ static void compressed_move_and_stats(void)
 	}
 	require(((pagemap(src + PAGE) >> 5) & ((UINT64_C(1) << 50) - 1)) == 0,
 		"zero page uses token zero");
+	check_compressed_pageout(src);
 	require(!mincore(dst, BYTES, vec) && !(vec[0] & 1), "unmapped hole");
 	long vm = metric("/proc/self/status", "VmSwap:");
 	long swap = metric("/proc/self/smaps_rollup", "Swap:");
