@@ -1,0 +1,560 @@
+diff --git a/mm/Kconfig b/mm/Kconfig
+index cd35075..06be0ee 100755
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1291,9 +1291,10 @@ config MEMCOMP
+ config MEMCOMP_DEFAULT_COMPRESSOR
+ 	string "Default compressor for memcomp"
+ 	depends on MEMCOMP
+-	default "zstd"
++	default "lz4"
+ 	help
+-	  Default compressor algorithm used by memcomp.
++	  Boot compressor, overridable with memcomp.compressor=. After
++	  startup, select lz4 or zstd via /sys/kernel/mm/memcomp/compressor.
+ 
+ config MEMCOMP_DEBUG_STATS
+ 	bool "Debug statistics for memcomp"
+diff --git a/mm/memcomp.c b/mm/memcomp.c
+index 2fbf661..444b1c0 100644
+--- a/mm/memcomp.c
++++ b/mm/memcomp.c
+@@ -330,11 +330,19 @@ struct memcomp_async_req {
+ 	unsigned long element;
+ };
+ 
++enum memcomp_codec_id {
++	MEMCOMP_CODEC_LZ4,
++	MEMCOMP_CODEC_ZSTD,
++	MEMCOMP_CODEC_BOOT,	/* Other crypto name selected on the command line. */
++	MEMCOMP_CODEC_COUNT,
++};
++
+ struct memcomp_async {
+ 	/* Requests not yet done, plus one until the batch is waited for. */
+ 	atomic_t pending;
+ 	struct completion done;
+ 	unsigned int id;
++	u8 codec; /* Immutable for the lifetime of this batch. */
+ 	/* Requests taken, from the first. */
+ 	unsigned int nr;
+ 	struct memcomp_async_req reqs[MEMCOMP_ASYNC_PAGES];
+@@ -450,7 +458,8 @@ static int memcomp_nr_pools;
+ struct memcomp_reclaim_ctx {
+ 	/* Serializes compression context use. */
+ 	struct mutex lock;
+-	struct crypto_comp *tfm;
++	struct crypto_comp *tfm; /* Borrowed from the codec for this lease. */
++	u8 codec;
+ 	unsigned char *dst;
+ 	struct memcomp_ctx_timing_record timing;
+ 	u32 timing_seq[MEMCOMP_RECLAIM_SOURCE_NR];
+@@ -561,7 +570,7 @@ static atomic64_t
+ /* Per-CPU decompression contexts for the page-fault load hot path. */
+ struct memcomp_decomp_ctx {
+ 	local_lock_t lock;
+-	struct crypto_comp *tfm;
++	struct crypto_comp *tfm[MEMCOMP_CODEC_COUNT];
+ };
+ 
+ static DEFINE_PER_CPU(struct memcomp_decomp_ctx, memcomp_decomp_ctxs) = {
+@@ -571,6 +580,31 @@ static DEFINE_PER_CPU(struct memcomp_decomp_ctx, memcomp_decomp_ctxs) = {
+ static bool memcomp_enabled;
+ static char memcomp_compressor[MEMCOMP_COMPRESSOR_NAME_LEN] =
+ 	MEMCOMP_DEFAULT_COMPRESSOR;
++struct memcomp_async_pool {
++	struct crypto_acomp *tfm; /* Release-published after all batches. */
++	spinlock_t lock; /* Protects the free-batch bitmap. */
++	unsigned long free;
++	unsigned int nr;
++	struct memcomp_async *batches[BITS_PER_LONG];
++};
++
++/*
++ * Published codecs live until reboot: old entries and async batches can outlive
++ * any number of switches. Output buffers and context admission stay shared.
++ */
++static struct memcomp_codec {
++	const char *name;
++	struct crypto_comp *enc[MEMCOMP_MAX_COMP_CTXS];
++	struct memcomp_async_pool async;
++	bool ready;
++} memcomp_codecs[MEMCOMP_CODEC_COUNT] = {
++	[MEMCOMP_CODEC_LZ4].name = "lz4",
++	[MEMCOMP_CODEC_ZSTD].name = "zstd",
++	[MEMCOMP_CODEC_BOOT].name = memcomp_compressor,
++};
++
++static enum memcomp_codec_id memcomp_active_codec __read_mostly;
++
+ /* Serializes compressor selection and publication of an async pool. */
+ static DEFINE_MUTEX(memcomp_select_lock);
+ 
+@@ -2467,6 +2501,7 @@ static int memcomp_decompress_payload(const void *src,
+ {
+ 	struct memcomp_decomp_ctx *decomp_ctx;
+ 	unsigned int decompressed_len;
++	u8 codec;
+ 	int ret;
+ 
+ 	if (compressed_len > PAGE_SIZE)
+@@ -2477,10 +2512,21 @@ static int memcomp_decompress_payload(const void *src,
+ 		return 0;
+ 	}
+ 
++	/*
++	 * A compressed frame ends in its producer's codec ID, including
++	 * frames copied verbatim into packed swap or back by defrag.
++	 */
++	if (compressed_len < 2)
++		return -EIO;
++	codec = ((const u8 *)src)[--compressed_len];
++	if (codec >= MEMCOMP_CODEC_COUNT ||
++	    !smp_load_acquire(&memcomp_codecs[codec].ready))
++		return -EIO;
++
+ 	local_lock(&memcomp_decomp_ctxs.lock);
+ 	decomp_ctx = this_cpu_ptr(&memcomp_decomp_ctxs);
+ 	decompressed_len = PAGE_SIZE;
+-	ret = crypto_comp_decompress(decomp_ctx->tfm, src, compressed_len,
++	ret = crypto_comp_decompress(decomp_ctx->tfm[codec], src, compressed_len,
+ 				     dst, &decompressed_len);
+ 	local_unlock(&memcomp_decomp_ctxs.lock);
+ 
+@@ -2903,6 +2949,8 @@ unavailable:
+ 		wake_up(&memcomp_comp_ctx_wait);
+ 		return NULL;
+ 	}
++	ctx->codec = smp_load_acquire(&memcomp_active_codec);
++	ctx->tfm = memcomp_codecs[ctx->codec].enc[idx];
+ 	ctx->borrowed = borrowed;
+ 	ctx->background = background;
+ 	ctx->direct_staging = false;
+@@ -2945,6 +2993,9 @@ memcomp_get_comp_ctx(enum memcomp_payload_mode mode,
+ 	if (miss)
+ 		*miss = MEMCOMP_COMP_CTX_AVAILABLE;
+ 
++	if (!memcomp_is_enabled())
++		return NULL;
++
+ #ifdef CONFIG_MEMCOMP_KUNIT_TEST
+ 	if (atomic_dec_if_positive(&memcomp_kunit_ctx_get_fail) >= 0) {
+ 		if (miss)
+@@ -3230,6 +3281,14 @@ memcomp_detach_reclaim_ctx(struct memcomp_reclaim_ctx **ctxp,
+ static int memcomp_compress_result(int ret, unsigned int *dst_len,
+ 				   unsigned int src_len)
+ {
++	if (!ret) {
++		if (!*dst_len)
++			return -EIO;
++		/* Charge, classify and pack the complete frame including its tag. */
++		if (*dst_len < src_len)
++			(*dst_len)++;
++		return 0;
++	}
+ 	if (ret != -E2BIG && ret != -ENOSPC)
+ 		return ret;
+ 	*dst_len = src_len;
+@@ -3269,6 +3328,7 @@ memcomp_prepare_payload_locked(struct memcomp_reclaim_ctx **ctxp,
+ 	unsigned int huge_class_size;
+ 	unsigned int dst_len;
+ 	u64 timing_start;
++	u8 codec = ctx->codec; /* Snapshot before direct staging releases ctx. */
+ 	u8 target;
+ 	bool allow_slow;
+ 	void *dst;
+@@ -3300,6 +3360,7 @@ memcomp_prepare_payload_locked(struct memcomp_reclaim_ctx **ctxp,
+ 		pool = memcomp_pools[target];
+ 		huge_class_size = zs_huge_class_size(pool);
+ 		allow_slow = ctx->background;
++		codec = precomp->async->codec;
+ 		compressed = precomp->buf;
+ 		dst_len = precomp->len;
+ 		ret = memcomp_compress_result(precomp->ret, &dst_len,
+@@ -3422,11 +3483,12 @@ have_payload:
+ 					     &timing->timing_zs_ns);
+ 		return -EIO;
+ 	}
+-	memcpy(dst, compressed, dst_len);
++	memcpy(dst, compressed, dst_len - 1);
++	((u8 *)dst)[dst_len - 1] = codec;
+ 	zs_unmap_object(pool, *handle);
+ #ifdef CONFIG_MEMCOMP_KUNIT_TEST
+ 	/* Observe the supplied bytes only after the real object copy. */
+-	if (precomp && compressed == precomp->buf && dst_len == precomp->len)
++	if (precomp && compressed == precomp->buf && dst_len - 1 == precomp->len)
+ 		memcomp_kunit_async_precomp(store, precomp);
+ #endif
+ 	memcomp_ctx_timing_phase_end(timing, timing_start,
+@@ -4852,18 +4914,6 @@ bool memcomp_store_after_unmap(struct folio *folio,
+  * the compressor while it fills the other, but takes its second only while
+  * that leaves another free; see memcomp_async_get_spare().
+  */
+-struct memcomp_async_pool {
+-	struct crypto_acomp *tfm; /* Release-published after all batches. */
+-	spinlock_t lock; /* Protects the free-batch bitmap. */
+-	unsigned long free;
+-	unsigned int nr;
+-	struct memcomp_async *batches[BITS_PER_LONG];
+-};
+-
+-static struct memcomp_async_pool memcomp_async_pool = {
+-	.lock = __SPIN_LOCK_UNLOCKED(memcomp_async_pool.lock),
+-};
+-
+ /* Take a free foreground batch, leaving @keep for another reclaimer. */
+ static struct memcomp_async *
+ memcomp_async_take(struct memcomp_async_pool *pool, unsigned int keep)
+@@ -4898,35 +4948,35 @@ static void memcomp_async_give(struct memcomp_async_pool *pool,
+ 	spin_unlock(&pool->lock);
+ }
+ 
+-struct memcomp_async *memcomp_async_get(void)
++static struct memcomp_async *memcomp_async_get_batch(unsigned int keep)
+ {
++	struct memcomp_async_pool *pool;
++	enum memcomp_codec_id id;
++
+ 	if (!memcomp_is_enabled())
+ 		return NULL;
+-	/* Pairs with async_init's release publication of a late pool. */
+-	if (!smp_load_acquire(&memcomp_async_pool.tfm))
++	id = smp_load_acquire(&memcomp_active_codec);
++	pool = &memcomp_codecs[id].async;
++	if (!smp_load_acquire(&pool->tfm))
+ 		return NULL;
+-	return memcomp_async_take(&memcomp_async_pool, 0);
++	return memcomp_async_take(pool, keep);
+ }
+ 
+-/*
+- * memcomp_async_get(), but only while another foreground batch would
+- * still be free after: for a reclaimer that has one out already, and would
+- * otherwise leave the next to come none.
+- */
++struct memcomp_async *memcomp_async_get(void)
++{
++	return memcomp_async_get_batch(0);
++}
++
++/* A second batch must leave another free for a different reclaimer. */
+ struct memcomp_async *memcomp_async_get_spare(void)
+ {
+-	if (!memcomp_is_enabled())
+-		return NULL;
+-	/* Pairs with async_init's release publication of a late pool. */
+-	if (!smp_load_acquire(&memcomp_async_pool.tfm))
+-		return NULL;
+-	return memcomp_async_take(&memcomp_async_pool, 1);
++	return memcomp_async_get_batch(1);
+ }
+ 
+ void memcomp_async_put(struct memcomp_async *async)
+ {
+ 	if (async)
+-		memcomp_async_give(&memcomp_async_pool, async);
++		memcomp_async_give(&memcomp_codecs[async->codec].async, async);
+ }
+ 
+ static void memcomp_async_done(struct crypto_async_request *areq, int err)
+@@ -5082,9 +5132,10 @@ static void memcomp_async_free_batch(struct memcomp_async *async)
+  * synchronous one stays what every other path uses.  Both are the same
+  * algorithm by name, so they make the same payloads.
+  */
+-static void memcomp_async_init(struct memcomp_async_pool *pool,
+-			       const char *compressor)
++static void memcomp_async_init(enum memcomp_codec_id id)
+ {
++	struct memcomp_async_pool *pool = &memcomp_codecs[id].async;
++	const char *compressor = memcomp_codecs[id].name;
+ 	unsigned int nr = min_t(unsigned int, num_possible_cpus(),
+ 				    BITS_PER_LONG);
+ 	struct crypto_acomp *tfm;
+@@ -5106,6 +5157,7 @@ static void memcomp_async_init(struct memcomp_async_pool *pool,
+ 		if (!async)
+ 			break;
+ 		init_completion(&async->done);
++		async->codec = id;
+ 		async->id = i;
+ 		for (j = 0; j < MEMCOMP_ASYNC_PAGES; j++) {
+ 			struct memcomp_async_req *r = &async->reqs[j];
+@@ -5151,10 +5203,6 @@ static void memcomp_destroy_comp_ctxs(void)
+ 	for (i = 0; i < memcomp_nr_comp_ctxs; i++) {
+ 		struct memcomp_reclaim_ctx *ctx = &memcomp_comp_ctxs[i];
+ 
+-		if (ctx->tfm) {
+-			crypto_free_comp(ctx->tfm);
+-			ctx->tfm = NULL;
+-		}
+ 		kfree(ctx->dst);
+ 		ctx->dst = NULL;
+ 	}
+@@ -5171,19 +5219,38 @@ static void memcomp_destroy_comp_ctxs(void)
+ 	memset(&memcomp_comp_budget, 0, sizeof(memcomp_comp_budget));
+ }
+ 
+-static void memcomp_destroy_decomp_ctxs(void)
++/* Only called on a failed preparation, before any reader can use this bank. */
++static void memcomp_discard_codec(enum memcomp_codec_id id)
++{
++	struct memcomp_codec *codec = &memcomp_codecs[id];
++	int i, cpu;
++
++	for (i = 0; i < memcomp_nr_comp_ctxs; i++) {
++		crypto_free_comp(codec->enc[i]);
++		codec->enc[i] = NULL;
++	}
++	for_each_possible_cpu(cpu) {
++		struct memcomp_decomp_ctx *ctx = &per_cpu(memcomp_decomp_ctxs, cpu);
++
++		crypto_free_comp(ctx->tfm[id]);
++		ctx->tfm[id] = NULL;
++	}
++}
++
++static int memcomp_alloc_decoders(enum memcomp_codec_id id)
+ {
+ 	int cpu;
+ 
+ 	for_each_possible_cpu(cpu) {
+-		struct memcomp_decomp_ctx *ctx;
++		struct crypto_comp *tfm;
+ 
+-		ctx = &per_cpu(memcomp_decomp_ctxs, cpu);
+-		if (ctx->tfm) {
+-			crypto_free_comp(ctx->tfm);
+-			ctx->tfm = NULL;
+-		}
++		tfm = crypto_alloc_comp(memcomp_codecs[id].name, 0, 0);
++
++		if (IS_ERR(tfm))
++			return PTR_ERR(tfm);
++		per_cpu(memcomp_decomp_ctxs, cpu).tfm[id] = tfm;
+ 	}
++	return 0;
+ }
+ 
+ static void memcomp_destroy_pools(void)
+@@ -5202,11 +5269,18 @@ static void memcomp_destroy_pools(void)
+ /* Set everything up for memcomp_compressor and enable memcomp. */
+ static int memcomp_start(void)
+ {
++	enum memcomp_codec_id id = MEMCOMP_CODEC_BOOT;
++	struct memcomp_codec *codec;
+ 	unsigned int target_comp_ctxs;
+ 	int ret = -ENOMEM;
+-	int cpu;
+ 	int i;
+ 
++	if (!strcmp(memcomp_compressor, "lz4"))
++		id = MEMCOMP_CODEC_LZ4;
++	else if (!strcmp(memcomp_compressor, "zstd"))
++		id = MEMCOMP_CODEC_ZSTD;
++	codec = &memcomp_codecs[id];
++
+ 	for (i = 0; i < MAX_NUMNODES; i++) {
+ 		spin_lock_init(&memcomp_lrus[i].lock);
+ 		INIT_LIST_HEAD(&memcomp_lrus[i].entries);
+@@ -5245,17 +5319,18 @@ static int memcomp_start(void)
+ 				memcomp_ctx_timing_seed(seed);
+ 		}
+ #endif
+-		ctx->tfm = crypto_alloc_comp(memcomp_compressor, 0, 0);
+-		if (IS_ERR(ctx->tfm)) {
+-			ret = PTR_ERR(ctx->tfm);
+-			ctx->tfm = NULL;
++		codec->enc[i] = crypto_alloc_comp(codec->name, 0, 0);
++		if (IS_ERR(codec->enc[i])) {
++			ret = PTR_ERR(codec->enc[i]);
++			codec->enc[i] = NULL;
+ 			break;
+ 		}
+ 		ctx->dst = kmalloc(MEMCOMP_MAX_COMPRESSED_SIZE,
+ 				   GFP_KERNEL);
+ 		if (!ctx->dst) {
+-			crypto_free_comp(ctx->tfm);
+-			ctx->tfm = NULL;
++			crypto_free_comp(codec->enc[i]);
++			codec->enc[i] = NULL;
++			ret = -ENOMEM;
+ 			break;
+ 		}
+ 		memcomp_nr_comp_ctxs++;
+@@ -5297,17 +5372,9 @@ static int memcomp_start(void)
+ 		pr_warn("initialized %u of %u direct staging buffers\n",
+ 			memcomp_nr_direct_staging, memcomp_nr_comp_ctxs);
+ 
+-	for_each_possible_cpu(cpu) {
+-		struct memcomp_decomp_ctx *ctx;
+-
+-		ctx = &per_cpu(memcomp_decomp_ctxs, cpu);
+-		ctx->tfm = crypto_alloc_comp(memcomp_compressor, 0, 0);
+-		if (IS_ERR(ctx->tfm)) {
+-			ret = PTR_ERR(ctx->tfm);
+-			ctx->tfm = NULL;
+-			goto err_decomp;
+-		}
+-	}
++	ret = memcomp_alloc_decoders(id);
++	if (ret)
++		goto err_codec;
+ 
+ 	for (i = 0; i < MEMCOMP_NR_POOLS; i++) {
+ 		char name[24];
+@@ -5321,7 +5388,7 @@ static int memcomp_start(void)
+ 
+ 	if (!memcomp_nr_pools) {
+ 		ret = -ENODEV;
+-		goto err_decomp;
++		goto err_codec;
+ 	}
+ 
+ #ifdef CONFIG_SWAP
+@@ -5345,7 +5412,9 @@ static int memcomp_start(void)
+ 		memcomp_meta_shrinker->scan_objects = mc16_meta_shrinker_scan;
+ 		shrinker_register(memcomp_meta_shrinker);
+ 	}
+-	memcomp_async_init(&memcomp_async_pool, memcomp_compressor);
++	memcomp_async_init(id);
++	smp_store_release(&codec->ready, true);
++	smp_store_release(&memcomp_active_codec, id);
+ 	/* Make every initialized resource visible before enabling callers. */
+ 	smp_store_release(&memcomp_enabled, true);
+ 	pr_info("using %s\n", memcomp_compressor);
+@@ -5356,8 +5425,8 @@ err_pools:
+ 	shrinker_free(memcomp_meta_shrinker);
+ 	memcomp_meta_shrinker = NULL;
+ 	memcomp_destroy_pools();
+-err_decomp:
+-	memcomp_destroy_decomp_ctxs();
++err_codec:
++	memcomp_discard_codec(id);
+ err_comp:
+ 	memcomp_destroy_comp_ctxs();
+ 	pr_warn("%s: init failed: %d\n", memcomp_compressor,
+@@ -5371,7 +5440,7 @@ err_comp:
+  * IOMMU in front of it does, from a module, say.  Wait that long for it, and
+  * take MEMCOMP_FALLBACK_COMPRESSOR once it is plain it is not coming or
+  * memcomp cannot be set up on it.  memcomp stays disabled until one
+- * of the two is decided on: payloads of two compressors cannot share it.
++ * of the two is decided on. Runtime selection begins after startup.
+  */
+ #define MEMCOMP_FALLBACK_COMPRESSOR	"zstd"
+ /* As long as the driver core waits for the modules a device's probe needs. */
+@@ -5381,7 +5450,6 @@ err_comp:
+ struct memcomp_compressor_select {
+ 	struct delayed_work work;
+ 	struct notifier_block nb;
+-	struct memcomp_async_pool *pool;
+ 	char *compressor;
+ 	unsigned long deadline;
+ 	bool decided;
+@@ -5398,7 +5466,6 @@ static struct memcomp_compressor_select memcomp_select = {
+ 	.nb = {
+ 		.notifier_call = memcomp_crypto_notify,
+ 	},
+-	.pool = &memcomp_async_pool,
+ 	.compressor = memcomp_compressor,
+ };
+ 
+@@ -5430,7 +5497,7 @@ static void memcomp_select_worker(struct work_struct *work)
+ 	mutex_lock(&memcomp_select_lock);
+ 	if (select->decided) {
+ 		if (select->started)
+-			memcomp_async_init(select->pool, select->compressor);
++			memcomp_async_init(memcomp_active_codec);
+ 		goto out;
+ 	}
+ 
+@@ -5468,11 +5535,14 @@ out:
+ 
+ static int __init memcomp_init(void)
+ {
+-	int ret;
++	int i, ret;
+ 
+ 	BUILD_BUG_ON(MAX_NUMNODES > U16_MAX);
+ 	BUILD_BUG_ON(MEMCOMP_MAX_COMP_CTXS > BITS_PER_LONG);
+ 
++	for (i = 0; i < MEMCOMP_CODEC_COUNT; i++)
++		spin_lock_init(&memcomp_codecs[i].async.lock);
++
+ 	/* Listen first, so a registration racing the check is not missed. */
+ 	memcomp_select.deadline = jiffies + MEMCOMP_COMPRESSOR_WAIT;
+ 	ret = crypto_register_notifier(&memcomp_select.nb);
+@@ -5501,11 +5571,65 @@ static ssize_t compressor_show(struct kobject *kobj,
+ 
+ 	/* The name can still fall back while a late compressor is awaited. */
+ 	mutex_lock(&memcomp_select_lock);
+-	len = sysfs_emit(buf, "%s\n", memcomp_compressor);
++	len = sysfs_emit(buf, "%s\n", memcomp_select.started ?
++			 memcomp_codecs[memcomp_active_codec].name : memcomp_compressor);
+ 	mutex_unlock(&memcomp_select_lock);
+ 	return len;
+ }
+ 
++static ssize_t compressor_store(struct kobject *kobj,
++				struct kobj_attribute *attr, const char *buf,
++				size_t count)
++{
++	size_t len = count;
++	enum memcomp_codec_id id;
++	struct memcomp_codec *codec;
++	int i, ret = 0;
++
++	if (len && buf[len - 1] == '\n')
++		len--;
++	if (len == 3 && !memcmp(buf, "lz4", 3))
++		id = MEMCOMP_CODEC_LZ4;
++	else if (len == 4 && !memcmp(buf, "zstd", 4))
++		id = MEMCOMP_CODEC_ZSTD;
++	else
++		return -EINVAL;
++
++	mutex_lock(&memcomp_select_lock);
++	if (!memcomp_select.started) {
++		ret = memcomp_select.decided ? -ENODEV : -EAGAIN;
++		goto out;
++	}
++	if (id == memcomp_active_codec)
++		goto out;
++	codec = &memcomp_codecs[id];
++	if (!codec->ready) {
++		for (i = 0; i < memcomp_nr_comp_ctxs; i++) {
++			struct crypto_comp *tfm;
++
++			tfm = crypto_alloc_comp(codec->name, 0, 0);
++
++			if (IS_ERR(tfm)) {
++				ret = PTR_ERR(tfm);
++				goto discard;
++			}
++			codec->enc[i] = tfm;
++		}
++		ret = memcomp_alloc_decoders(id);
++		if (ret)
++			goto discard;
++		smp_store_release(&codec->ready, true);
++	}
++	memcomp_async_init(id);
++	smp_store_release(&memcomp_active_codec, id);
++out:
++	mutex_unlock(&memcomp_select_lock);
++	return ret ? (ssize_t)ret : (ssize_t)count;
++discard:
++	memcomp_discard_codec(id);
++	goto out;
++}
++
+ #ifdef CONFIG_MEMCOMP_DEBUG_STATS
+ /* The span upkeep part of execution_events, appended at @len. */
+ static ssize_t memcomp_span_events_show(char *buf, ssize_t len)
+@@ -6123,7 +6247,7 @@ static ssize_t admission_events_show(struct kobject *kobj,
+ #endif
+ 
+ static struct kobj_attribute stat_attr = __ATTR_RO(stat);
+-static struct kobj_attribute compressor_attr = __ATTR_RO(compressor);
++static struct kobj_attribute compressor_attr = __ATTR_RW(compressor);
+ #ifdef CONFIG_MEMCOMP_DEBUG_STATS
+ static struct kobj_attribute placement_events_attr =
+ 	__ATTR_RO(placement_events);

@@ -153,6 +153,7 @@ fi
 if [[ "$APPLY_MEMCOMP" =~ ^[Yy]$ ]]; then
   echo ">>> 应用 memcomp 6.1 回移植补丁..."
   git apply "$SCRIPT_DIR/patches/003-memcomp.patch"
+  git apply "$SCRIPT_DIR/patches/005-memcomp-runtime-codec.patch"
 fi
 cd "$WORKDIR/kernel_ws"
 

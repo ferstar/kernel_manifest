@@ -1,12 +1,23 @@
 # Realme GT5 Pro (SM8650) Android 16 kernel
 
-The `realme/sm8650_b` branch builds GKI 6.1.118 for the Realme GT5 Pro on Android 16 (Android B). It uses memcomp with LZ4 to compress anonymous pages in memory. Both zram and zswap are disabled in this build.
+The `realme/sm8650_b` branch builds GKI 6.1.118 for the Realme GT5 Pro on Android 16 (Android B). It uses memcomp to compress anonymous pages in memory, with LZ4 as the default. Both zram and zswap are disabled in this build.
 
 ## What this branch builds
 
 - The build pins the Realme AndroidB common kernel to `e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7` and takes the vendor sources from their `master` branch.
 - The common kernel carries the memcomp backport, LZ4 v1.11.1 and a Zstd backport. DroidSpaces IPC, namespace and networking support is enabled by default.
 - The vendor patch removes a redundant slab constructor in `oplus_bsp_schedinfo`. Hot-thread nodes are still zeroed on allocation.
+
+## Memcomp compression algorithm
+
+Open **Memcomp Monitor → 内存** to see which compressor the kernel is using. On kernels with runtime selection, choose LZ4 or Zstd for new stores. Pages already in the pool keep their original codec until they are read back or released. The setting lasts until reboot. The v20261124 kernel shows the active codec read-only.
+
+A root shell can use the same interface. To select Zstd and read back the active codec, run the following. Use `lz4` to switch back.
+
+```sh
+echo zstd > /sys/kernel/mm/memcomp/compressor
+cat /sys/kernel/mm/memcomp/compressor
+```
 
 ## Build
 
