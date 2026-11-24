@@ -1,0 +1,22 @@
+diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
+--- a/fs/proc/meminfo.c
++++ b/fs/proc/meminfo.c
+@@ -3,6 +3,7 @@
+ #include <linux/init.h>
+ #include <linux/kernel.h>
+ #include <linux/mm.h>
++#include <linux/memcomp.h>
+ #include <linux/hugetlb.h>
+ #include <linux/mman.h>
+ #include <linux/mmzone.h>
+@@ -177,6 +178,10 @@
+ 
+ 	arch_report_meminfo(m);
+ 
++	/* init.oplus.nandswap.sh checks for Ezr before leaving MGLRU enabled. */
++	if (IS_ENABLED(CONFIG_LRU_GEN) && memcomp_available())
++		seq_puts(m, "Ezr: 0 kB (fake for Oplus MGLRU boot check)\n");
++
+ 	return 0;
+ }
+ 

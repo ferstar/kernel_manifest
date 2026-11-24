@@ -19,6 +19,29 @@ echo zstd > /sys/kernel/mm/memcomp/compressor
 cat /sys/kernel/mm/memcomp/compressor
 ```
 
+## MGLRU on Oplus firmware
+
+The RMX3888 boot script checks for an `Ezr:` line in `/proc/meminfo`.
+When memcomp is ready, patch 006 reports
+`Ezr: 0 kB (fake for Oplus MGLRU boot check)` so the script preserves
+the kernel's MGLRU setting. The marker reports zero bytes. On the
+tested firmware, `/sys/kernel/mm/lru_gen/enabled` read `0x0003` after boot.
+
+On one RMX3888 running the same LZ4 kernel before patch 006, switching
+among ten commonly used apps in a fixed order gave the following Android
+framework foreground timings. Each app ran eight measured times per mode.
+
+| Metric | MGLRU off | MGLRU on |
+| --- | ---: | ---: |
+| Foreground P50 | 110 ms | 109 ms |
+| Foreground P95 | 185 ms | 155 ms |
+| Process or Activity reloads | 0/80 | 0/80 |
+| Warm repeat P95 (20 of the 80 returns per mode) | 156 ms | 150 ms |
+
+The warm repeat ran on then off. The smaller gap after warm-up limits
+how much of the pooled 30 ms difference can be attributed to MGLRU.
+The post-flash check on the released kernel verifies the boot setting.
+
 ## Build
 
 Use an x86-64 Linux host for the prebuilt Clang toolchain. On Debian or Ubuntu, run this from the repository root to install the build dependencies with APT and then build the kernel. The install step uses `sudo`.

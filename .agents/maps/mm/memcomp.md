@@ -4,6 +4,7 @@ The [backport](../../../patches/003-memcomp.patch) targets the common kernel rev
 
 ## Invariants and regression coverage
 
+- On Oplus firmware, the [boot compatibility patch](../../../patches/006-oplus-memcomp-mglru.patch) appends an annotated zero-size `Ezr:` field to `/proc/meminfo` when MGLRU is built and memcomp is ready. The vendor `post_fs_data()` function checks for the field before writing zero to `lru_gen/enabled`. The reported size is always zero.
 - A compressed PTE carries a memcomp token. Only swap-backed entries may reach `swp_swapcount()` in the madvise walk. Exercise repeated PAGEOUT and COLD on an already compressed mapping and check for `Bad swap file entry` in the same log window.
 - MOVE and mincore can drop and reacquire page-table locks. Check token lifetime across retries, the PMD under the PTE lock, and the zero-token case. The [regression program](../../../tests/memcomp/regression.c) covers MOVE, residency, swap accounting and rollback.
 - Keep the [busy-pin test hook](../../../tests/memcomp/pin-test.h) confined to a test kernel. Identify injected QEMU coverage separately from behavior observed on the phone.
