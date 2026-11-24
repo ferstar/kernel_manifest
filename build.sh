@@ -45,12 +45,14 @@ echo
 install_dependencies() {
   echo ">>> 安装构建依赖..."
   # 基础依赖包
-  local base_deps="curl bison flex make binutils dwarves git lld pahole zip perl make gcc python3 python-is-python3 bc libssl-dev libelf-dev ccache"
+  local -a base_deps=(
+    curl bison flex make binutils dwarves git lld pahole zip perl gcc
+    python3 python-is-python3 bc libssl-dev libelf-dev ccache patch
+  )
   
-  # 如果 SKIP_DEPS 未设置或为 n，则安装依赖
-  if [[ "${SKIP_DEPS:-n}" =~ ^[Nn]$ ]]; then
+  if [[ "$SKIP_DEPS" =~ ^[Nn]$ ]]; then
     sudo apt-get update
-    sudo apt-get install -y $base_deps
+    sudo apt-get install -y "${base_deps[@]}"
   else
     echo ">>> 跳过依赖安装"
   fi

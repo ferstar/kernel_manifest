@@ -10,15 +10,13 @@ The `realme/sm8650_b` branch builds GKI 6.1.118 for the Realme GT5 Pro on Androi
 
 ## Build
 
-Use an x86-64 Linux host for the prebuilt Clang toolchain. On Debian or Ubuntu, install the host tools before the first build.
+Use an x86-64 Linux host for the prebuilt Clang toolchain. On Debian or Ubuntu, run this from the repository root to install the build dependencies with APT and then build the kernel. The install step uses `sudo`.
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y bc binutils bison build-essential ccache curl dwarves flex \
-  git libelf-dev libssl-dev lld pahole patch perl python3 python-is-python3 zip
+SKIP_DEPS=n ./build.sh
 ```
 
-Run the build from the repository root.
+Once the host has the required packages, use the default build command.
 
 ```bash
 ./build.sh
@@ -31,7 +29,7 @@ The script downloads Clang on first use and refreshes its source trees under `wo
 | `MANIFEST` | `gt5pro` | Device label in the ZIP filename. The source repositories are fixed to the GT5 Pro. |
 | `CUSTOM_SUFFIX` | `android16-11-o-vYYYYMMDD` | Kernel release suffix and ZIP filename suffix, using the build date by default. |
 | `APPLY_DROIDSPACES` | `y` | Set to `n` to skip the DroidSpaces kABI patch and its kernel configuration. |
-| `SKIP_DEPS` | `y` | Leave at `y` after installing the packages above. With `n`, the script passes the entire list to APT as one package name, so installation fails. |
+| `SKIP_DEPS` | `y` | Skip APT by default. Set to `n` to update the package index and install build dependencies with `sudo` before building. |
 
 ## Build outputs
 
