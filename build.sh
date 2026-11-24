@@ -98,6 +98,7 @@ else
     https://github.com/realme-kernel-opensource/realme_GT5pro-AndroidB-vendor-source.git \
     vendor
 fi
+git -C vendor apply "$SCRIPT_DIR/patches/004-schedinfo-hotthread.patch"
 for dir in vendor/*; do
   if [ -d "../$dir" ]; then
   echo ">>> 清理旧的 $dir 目录..."

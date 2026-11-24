@@ -1,0 +1,26 @@
+diff --git a/vendor/oplus/kernel/cpu/sched/sched_info/osi_hotthread.c b/vendor/oplus/kernel/cpu/sched/sched_info/osi_hotthread.c
+index b40db0f2..46b90cb6 100755
+--- a/vendor/oplus/kernel/cpu/sched/sched_info/osi_hotthread.c
++++ b/vendor/oplus/kernel/cpu/sched/sched_info/osi_hotthread.c
+@@ -272,12 +272,6 @@ void jank_hotthread_update_tick(struct task_struct *p, u64 now)
+ 	}
+ }
+ 
+-static void init_hot_thread_struct(void *ptr)
+-{
+-	struct hot_thread_node *hot_thread_node = ptr;
+-	memset(hot_thread_node, 0, sizeof(struct hot_thread_node));
+-}
+-
+ void hotthread_show(struct seq_file *m, u32 win_idx, u64 now)
+ {
+ 	u32 i, now_index, idx;
+@@ -350,7 +344,7 @@ int osi_hotthread_proc_init(struct proc_dir_entry *pde)
+ 	}
+ 	hot_thread_struct_cachep = kmem_cache_create("hot_thread_node",
+ 			sizeof(struct hot_thread_node), 0,
+-			SLAB_PANIC|SLAB_ACCOUNT, init_hot_thread_struct);
++			SLAB_PANIC | SLAB_ACCOUNT, NULL);
+ 	if (!hot_thread_struct_cachep)
+ 		return -ENOMEM;
+ 
