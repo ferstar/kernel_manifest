@@ -1,0 +1,6 @@
+id=gt5_memcomp_monitor
+name=Memcomp Monitor
+version=v20261125
+versionCode=20261125
+author=ferstar
+description=Live memcomp monitoring and per-boot LZ4/Zstd selection on compatible kernels, with an OSense compatibility profile and optional verified vendor KO install/restore for RMX3888.

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Memcomp Monitor</title>
+<link rel="stylesheet" href="style.css?ui=2">
+</head>
+<body>
+<header><h1>Memcomp Monitor</h1></header>
+<nav aria-label="页面">
+  <button id="tabMemory" aria-controls="memory" aria-pressed="true">内存</button>
+  <button id="tabVendor" aria-controls="vendor" aria-pressed="false">驱动修复</button>
+</nav>
+<main>
+<section id="memory" aria-label="内存">
+  <section class="card primary">
+    <h2 id="savingLabel">压缩省下的内存</h2>
+    <strong id="saved">—</strong>
+    <div class="row"><small id="state">正在读取…</small><button id="refresh">刷新</button></div>
+    <p id="error" role="status" hidden></p>
+  </section>
+  <section class="card">
+    <h2>压缩模式</h2>
+    <div class="current">正在使用 <strong id="codecCurrent">—</strong></div>
+    <div id="codecControls" class="modes" role="group" aria-label="选择压缩模式" hidden>
+      <button id="lz4" aria-pressed="false"><b>LZ4</b><span>默认</span></button>
+      <button id="zstd" aria-pressed="false"><b>Zstd</b><span>优先压缩</span></button>
+    </div>
+    <p id="codecHint" hidden></p>
+    <p id="codecStatus" role="status" hidden></p>
+  </section>
+  <details id="details" class="card">
+    <summary>查看详情</summary>
+    <h2>内存构成</h2>
+    <dl>
+      <div><dt>逻辑数据</dt><dd id="logical">—</dd></div>
+      <div><dt>压缩载荷</dt><dd id="payload">—</dd></div>
+      <div><dt>实际池占用</dt><dd id="pool">—</dd></div>
+      <div><dt>载荷压缩比</dt><dd id="ratio">—</dd></div>
+    </dl>
+    <p>节省量按逻辑数据减去池占用计算。</p>
+    <h2>最近趋势</h2>
+    <canvas id="trend" width="720" height="120" aria-hidden="true"></canvas>
+    <small id="span">等待采样</small>
+    <h2>成功存入</h2>
+    <table><thead><tr><th scope="col">来源</th><th scope="col">累计</th><th scope="col">每秒</th></tr></thead><tbody>
+      <tr><th scope="row">后台</th><td id="bg">—</td><td id="bgRate">—</td></tr>
+      <tr><th scope="row">直接</th><td id="direct">—</td><td id="directRate">—</td></tr>
+      <tr><th scope="row">其他</th><td id="other">—</td><td id="otherRate">—</td></tr>
+    </tbody></table>
+    <small id="interval">等待下一次采样</small>
+    <h2>运行环境</h2>
+    <dl><div><dt>OSense 策略</dt><dd id="policy">—</dd></div>
+        <div><dt>内核版本</dt><dd id="kernel">—</dd></div></dl>
+    <small id="updated">每 5 秒更新</small>
+  </details>
+</section>
+<section id="vendor" aria-label="驱动修复" hidden>
+  <section class="card">
+    <h2>热点线程统计驱动</h2>
+    <dl><div><dt>当前槽位</dt><dd id="slot">—</dd></div>
+        <div><dt>驱动镜像</dt><dd id="image">正在检查…</dd></div>
+        <div><dt>原版备份</dt><dd id="backup">—</dd></div></dl>
+    <p id="vendorHint" hidden></p>
+    <div class="actions">
+      <button id="check">重新检查</button>
+      <button id="apply" hidden>刷入修复版</button>
+      <button id="restore" hidden>还原原版</button>
+    </div>
+    <p id="vendorStatus" role="status" hidden></p>
+    <code id="recoveryPath" hidden></code>
+  </section>
+</section>
+</main>
+<dialog id="confirm" aria-labelledby="question" aria-describedby="target detail">
+  <h2 id="question"></h2><code id="target"></code><p id="detail"></p>
+  <div class="actions"><button id="cancel" autofocus>取消</button><button id="proceed">确认写入</button></div>
+</dialog>
+<script src="app.js?ui=2"></script>
+</body></html>

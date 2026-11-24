@@ -42,6 +42,12 @@ The warm repeat ran on then off. The smaller gap after warm-up limits
 how much of the pooled 30 ms difference can be attributed to MGLRU.
 The post-flash check on the released kernel verifies the boot setting.
 
+## Memcomp Monitor for KernelSU
+
+Install the optional Memcomp Monitor ZIP in KernelSU to view pool usage and change the compressor. On a supported RMX3888 profile the module also disables the vendor swap and dynamic zram switches. The **驱动修复** page can back up, patch and restore the active slot's vendor ramdisk on unlocked devices with firmware `RMX3888_16.0.3.500`. Writing the partition requires a separate confirmation in the WebUI.
+
+See the [module guide](ksu/memcomp-monitor/README.txt) for device behavior and the [developer guide](ksu/memcomp-monitor/DEVELOPING.md) for packaging and offline checks.
+
 ## Build
 
 Use an x86-64 Linux host for the prebuilt Clang toolchain. On Debian or Ubuntu, run this from the repository root to install the build dependencies with APT and then build the kernel. The install step uses `sudo`.
