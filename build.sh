@@ -26,7 +26,8 @@ cd "$WORKDIR"
 # 基础配置参数
 readonly MANIFEST=${MANIFEST:-gt5pro}
 readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-android16-11-o-v$(date +%Y%m%d)}
-readonly APPLY_DROIDSPACES=${APPLY_DROIDSPACES:-y}
+readonly APPLY_MEMCOMP="y"
+APPLY_DROIDSPACES=${APPLY_DROIDSPACES:-y}
 readonly COMMON_REV="e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7"
 readonly SKIP_DEPS=${SKIP_DEPS:-y}
 
@@ -146,6 +147,10 @@ if [[ "$APPLY_DROIDSPACES" =~ ^[Yy]$ ]]; then
   echo ">>> 应用 DroidSpaces kABI 补丁..."
   patch -p1 < "$SCRIPT_DIR/patches/001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch"
 fi
+if [[ "$APPLY_MEMCOMP" =~ ^[Yy]$ ]]; then
+  echo ">>> 应用 memcomp 6.1 回移植补丁..."
+  git apply "$SCRIPT_DIR/patches/003-memcomp.patch"
+fi
 cd "$WORKDIR/kernel_ws"
 
 # 内核配置
@@ -158,6 +163,18 @@ if [[ "$APPLY_DROIDSPACES" =~ ^[Yy]$ ]]; then
       echo "${cfg}=y" >> "$WORKDIR/kernel_ws/common/arch/arm64/configs/gki_defconfig"
     fi
   done
+fi
+if [[ "$APPLY_MEMCOMP" =~ ^[Yy]$ ]]; then
+  echo ">>> 配置 memcomp 内核选项（禁用 ZRAM / ZSWAP）..."
+  sed -i '/^CONFIG_ZRAM/d; /^# CONFIG_ZRAM /d; /^CONFIG_ZSWAP/d; /^# CONFIG_ZSWAP /d; /^CONFIG_ZSMALLOC/d; /^CONFIG_MEMCOMP/d' "$WORKDIR/kernel_ws/common/arch/arm64/configs/gki_defconfig"
+  cat <<'EOF' >> "$WORKDIR/kernel_ws/common/arch/arm64/configs/gki_defconfig"
+# CONFIG_ZRAM is not set
+# CONFIG_ZSWAP is not set
+CONFIG_ZSMALLOC=y
+CONFIG_MEMCOMP=y
+CONFIG_MEMCOMP_DEFAULT_COMPRESSOR="lz4"
+CONFIG_MEMCOMP_DEBUG_STATS=y
+EOF
 fi
 #####################################################################
 
