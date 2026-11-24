@@ -1,3 +1,46 @@
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index a1f78db7b..613bade24 100755
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -13,6 +13,7 @@
+ #include <linux/mempolicy.h>
+ #include <linux/rmap.h>
+ #include <linux/swap.h>
++#include <linux/memcomp.h>
+ #include <linux/sched/mm.h>
+ #include <linux/swapops.h>
+ #include <linux/mmu_notifier.h>
+@@ -560,11 +561,18 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
+ 	} else if (is_swap_pte(*pte)) {
+ 		swp_entry_t swpent = pte_to_swp_entry(*pte);
+ 
+-		if (!non_swap_entry(swpent)) {
++		if (!non_swap_entry(swpent) || is_memcomp_entry(swpent)) {
+ 			int mapcount;
+ 
++			if (is_memcomp_entry(swpent)) {
++				if (!memcomp_entry_stat(swp_offset(swpent), NULL, &mapcount))
++					return;
++			} else {
++				mapcount = swp_swapcount(swpent);
++				trace_android_vh_smaps_pte_entry(swpent,
++						&mss->writeback, &mss->same, &mss->huge);
++			}
+ 			mss->swap += PAGE_SIZE;
+-			mapcount = swp_swapcount(swpent);
+ 			if (mapcount >= 2) {
+ 				u64 pss_delta = (u64)PAGE_SIZE << PSS_SHIFT;
+ 
+@@ -573,9 +581,6 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
+ 			} else {
+ 				mss->swap_pss += (u64)PAGE_SIZE << PSS_SHIFT;
+ 			}
+-			trace_android_vh_smaps_pte_entry(swpent,
+-					&mss->writeback,
+-					&mss->same, &mss->huge);
+ 		} else if (is_pfn_swap_entry(swpent)) {
+ 			if (is_migration_entry(swpent))
+ 				migration = true;
 diff --git a/include/linux/memcomp.h b/include/linux/memcomp.h
 new file mode 100644
 index 000000000..5305a9ad4
@@ -686,10 +729,10 @@ index b622aa684..a6b483532 100755
  				pte_clear_not_present_full(mm, addr, pte, tlb->fullmm);
 diff --git a/mm/memcomp.c b/mm/memcomp.c
 new file mode 100644
-index 000000000..9ef583aff
+index 000000000..2fbf6615a
 --- /dev/null
 +++ b/mm/memcomp.c
-@@ -0,0 +1,6182 @@
+@@ -0,0 +1,6172 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * memcomp - direct in-memory compression for reclaimed pages.
@@ -5216,19 +5259,9 @@ index 000000000..9ef583aff
 +	return i;
 +}
 +
-+/*
-+ * Use as a branch condition: a successful map retains both its PTE spinlock
-+ * and the RCU read lock from __pte_offset_map(); NULL retains neither.
-+ * Keep both real conditional contexts visible here rather than returning
-+ * them through pte_offset_map_lock()'s inline wrapper.
-+ */
++/* Successful lookup returns a mapped PTE with its page-table lock held. */
 +#define memcomp_pte_map_lock(mm, pmd, address, ptep, ptlp) \
-+	({ \
-+		spinlock_t **__ptlp = (ptlp); \
-+		__cond_lock(RCU, __cond_lock(*__ptlp, \
-+			*(ptep) = __pte_offset_map_lock((mm), (pmd), \
-+						     (address), __ptlp))); \
-+	})
++	((*(ptep) = memcomp_pte_offset_map_lock(mm, pmd, address, ptlp)) != NULL)
 +
 +#include "memcomp/zero_load.h"
 +
@@ -7799,10 +7832,10 @@ index 000000000..a81a2b8d5
 +#endif /* _MM_MEMCOMP_CACHE_STORE_H */
 diff --git a/mm/memcomp/compat_6_1.h b/mm/memcomp/compat_6_1.h
 new file mode 100644
-index 000000000..82f104c42
+index 000000000..913e97cce
 --- /dev/null
 +++ b/mm/memcomp/compat_6_1.h
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,103 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _MM_MEMCOMP_COMPAT_6_1_H
 +#define _MM_MEMCOMP_COMPAT_6_1_H
@@ -7848,21 +7881,22 @@ index 000000000..82f104c42
 +static inline unsigned long thp_vma_suitable_orders(struct vm_area_struct *vma,
 +	unsigned long addr, unsigned long orders) { return 0; }
 +static inline bool gfp_has_io_fs(gfp_t gfp) { return (gfp & (__GFP_IO | __GFP_FS)) == (__GFP_IO | __GFP_FS); }
-+static inline pte_t *__pte_offset_map_lock(struct mm_struct *mm, pmd_t *pmd,
-+	unsigned long addr, spinlock_t **ptlp)
-+{
-+	pmd_t pmdval = READ_ONCE(*pmd);
++#include "pgtable.h"
 +
-+	if (pmd_none(pmdval) || pmd_trans_huge(pmdval) ||
-+	    pmd_devmap(pmdval) || unlikely(pmd_bad(pmdval)))
-+		return NULL;
-+	return pte_offset_map_lock(mm, pmd, addr, ptlp);
-+}
 +static inline bool pte_needs_soft_dirty_wp(struct vm_area_struct *vma, pte_t pte) { return false; }
 +static inline pte_t pte_move_swp_offset(pte_t pte, long delta)
 +{
 +	swp_entry_t entry = pte_to_swp_entry(pte);
-+	return swp_entry_to_pte(swp_entry(swp_type(entry), swp_offset(entry) + delta));
++	pte_t moved = swp_entry_to_pte(swp_entry(swp_type(entry),
++						  swp_offset(entry) + delta));
++
++	if (pte_swp_exclusive(pte))
++		moved = pte_swp_mkexclusive(moved);
++	if (pte_swp_soft_dirty(pte))
++		moved = pte_swp_mksoft_dirty(moved);
++	if (pte_swp_uffd_wp(pte))
++		moved = pte_swp_mkuffd_wp(moved);
++	return moved;
 +}
 +static inline void flush_icache_pages(struct vm_area_struct *vma, struct page *page, unsigned int nr)
 +{
@@ -10321,6 +10355,48 @@ index 000000000..34ba364cf
 +	*tail = (struct mc16_payload_tail) { };
 +}
 +#endif /* _MM_MEMCOMP_PAYLOAD_H */
+diff --git a/mm/memcomp/pgtable.h b/mm/memcomp/pgtable.h
+new file mode 100644
+index 000000000..8aa816c1f
+--- /dev/null
++++ b/mm/memcomp/pgtable.h
+@@ -0,0 +1,36 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _MM_MEMCOMP_PGTABLE_H
++#define _MM_MEMCOMP_PGTABLE_H
++
++#include <linux/mm.h>
++#include <linux/swapops.h>
++
++/*
++ * Callers hold mmap_lock, a VMA read lock (MOVE), or the anon_vma
++ * read lock (rmap). On this 6.1 tree those exclude teardown of an existing
++ * anonymous PTE table. In particular, collapse takes anon_vma for write.
++ * Derive both the PTE and its lock from the same PMD snapshot.
++ */
++static inline pte_t *memcomp_pte_offset_map_lock(struct mm_struct *mm,
++		pmd_t *pmd, unsigned long addr, spinlock_t **ptlp)
++{
++	for (;;) {
++		pmd_t snapshot = READ_ONCE(*pmd);
++		spinlock_t *ptl;
++		pte_t *pte;
++
++		if (!pmd_present(snapshot) || pmd_trans_huge(snapshot) ||
++		    pmd_devmap(snapshot) || unlikely(pmd_bad(snapshot)))
++			return NULL;
++		pte = pte_offset_map(&snapshot, addr);
++		ptl = pte_lockptr(mm, &snapshot);
++		spin_lock(ptl);
++		if (pmd_same(snapshot, READ_ONCE(*pmd))) {
++			*ptlp = ptl;
++			return pte;
++		}
++		pte_unmap_unlock(pte, ptl);
++	}
++}
++
++#endif
 diff --git a/mm/memcomp/query.h b/mm/memcomp/query.h
 new file mode 100644
 index 000000000..467064a7a
@@ -13588,30 +13664,60 @@ index 2cf47494c..00629ad0d 100644
  	if (mode != MIGRATE_SYNC_NO_COPY)
  		folio_migrate_copy(dst, src);
 diff --git a/mm/mincore.c b/mm/mincore.c
-index dd8f8837f..f0265014a 100644
+index dd8f8837f..2d2adf50e 100644
 --- a/mm/mincore.c
 +++ b/mm/mincore.c
-@@ -15,6 +15,7 @@
+@@ -15,6 +15,8 @@
  #include <linux/syscalls.h>
  #include <linux/swap.h>
  #include <linux/swapops.h>
 +#include <linux/memcomp.h>
++#include "memcomp/pgtable.h"
  #include <linux/shmem_fs.h>
  #include <linux/hugetlb.h>
  #include <linux/pgtable.h>
-@@ -131,7 +132,9 @@ static int mincore_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+@@ -106,9 +108,10 @@ static int mincore_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+ 	unsigned char *vec = walk->private;
+ 	int nr = (end - addr) >> PAGE_SHIFT;
+ 
++map_remaining:
+ 	ptl = pmd_trans_huge_lock(pmd, vma);
+ 	if (ptl) {
+-		memset(vec, 1, nr);
++		memset(vec, 1, (end - addr) >> PAGE_SHIFT);
+ 		spin_unlock(ptl);
+ 		goto out;
+ 	}
+@@ -131,7 +134,26 @@ static int mincore_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
  		else { /* pte is a swap entry */
  			swp_entry_t entry = pte_to_swp_entry(pte);
  
 -			if (non_swap_entry(entry)) {
 +			if (is_memcomp_entry(entry)) {
-+				*vec = 0;
++				struct memcomp_ref ref = { };
++				unsigned long token = swp_offset(entry);
++				bool pinned, present, stable;
++
++				pinned = !token || memcomp_entry_get_ref(token, &ref);
++				pte_unmap_unlock(ptep, ptl);
++				present = pinned && memcomp_mincore(token);
++				ptep = memcomp_pte_offset_map_lock(walk->mm, pmd, addr, &ptl);
++				stable = ptep && pte_same(ptep_get(ptep), pte);
++				if (!stable) {
++					if (ptep)
++						pte_unmap_unlock(ptep, ptl);
++					memcomp_entry_put_ref(&ref);
++					goto map_remaining;
++				}
++				/* The unchanged PTE still owns a reference. */
++				memcomp_entry_put_ref(&ref);
++				*vec = present;
 +			} else if (non_swap_entry(entry)) {
  				/*
  				 * migration or hwpoison entries are always
  				 * uptodate
 diff --git a/mm/rmap.c b/mm/rmap.c
-index 53b5443a8..f06946f27 100644
+index 53b5443a8..b09c2083e 100644
 --- a/mm/rmap.c
 +++ b/mm/rmap.c
 @@ -58,6 +58,7 @@
@@ -13633,11 +13739,18 @@ index 53b5443a8..f06946f27 100644
  				WARN_ON_ONCE(1);
  				ret = false;
  				/* We have to invalidate as we cleared the pte */
-@@ -1895,14 +1897,24 @@ static bool try_to_unmap_one(struct folio *folio, struct vm_area_struct *vma,
+@@ -1895,24 +1897,26 @@ static bool try_to_unmap_one(struct folio *folio, struct vm_area_struct *vma,
  			}
  #endif
  
 -			if (swap_duplicate(entry) < 0) {
+-				set_pte_at(mm, address, pvmw.pte, pteval);
+-				ret = false;
+-				page_vma_mapped_walk_done(&pvmw);
+-				break;
+-			}
+-			if (arch_unmap_one(mm, vma, address, pteval) < 0) {
+-				swap_free(entry);
 +			if (reserved) {
 +				if (!memcomp_entry_get(swp_offset(entry))) {
 +					set_pte_at(mm, address, pvmw.pte, pteval);
@@ -13651,8 +13764,14 @@ index 53b5443a8..f06946f27 100644
  				page_vma_mapped_walk_done(&pvmw);
  				break;
  			}
- 			if (arch_unmap_one(mm, vma, address, pteval) < 0) {
+-
+-			/* See page_try_share_anon_rmap(): clear PTE first. */
+-			if (anon_exclusive &&
+-			    page_try_share_anon_rmap(subpage)) {
 -				swap_free(entry);
++			/* The PTE was cleared before sharing its exclusive rmap. */
++			if (arch_unmap_one(mm, vma, address, pteval) < 0 ||
++			    (anon_exclusive && page_try_share_anon_rmap(subpage))) {
 +				if (reserved)
 +					memcomp_invalidate_nr(swp_offset(entry), 1);
 +				else
@@ -13660,6 +13779,83 @@ index 53b5443a8..f06946f27 100644
  				set_pte_at(mm, address, pvmw.pte, pteval);
  				ret = false;
  				page_vma_mapped_walk_done(&pvmw);
+diff --git a/mm/userfaultfd.c b/mm/userfaultfd.c
+index 789b78245..63579df96 100644
+--- a/mm/userfaultfd.c
++++ b/mm/userfaultfd.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/mm.h>
++#include <linux/memcomp.h>
+ #include <linux/sched/signal.h>
+ #include <linux/pagemap.h>
+ #include <linux/rmap.h>
+@@ -1036,6 +1037,7 @@ static int move_pages_pte(struct mm_struct *mm, pmd_t *dst_pmd, pmd_t *src_pmd,
+ 			  unsigned long dst_addr, unsigned long src_addr,
+ 			  __u64 mode)
+ {
++	struct memcomp_ref move_ref = { };
+ 	swp_entry_t entry;
+ 	pte_t orig_src_pte, orig_dst_pte;
+ 	pte_t src_folio_pte;
+@@ -1208,7 +1210,47 @@ static int move_pages_pte(struct mm_struct *mm, pmd_t *dst_pmd, pmd_t *src_pmd,
+ 				       dst_ptl, src_ptl, src_folio);
+ 	} else {
+ 		entry = pte_to_swp_entry(orig_src_pte);
+-		if (non_swap_entry(entry)) {
++		if (is_memcomp_entry(entry)) {
++			unsigned long token = swp_offset(entry);
++
++			if (!pte_swp_exclusive(orig_src_pte)) {
++				err = -EBUSY;
++				goto out;
++			}
++
++			/*
++			 * A nonresident token can move with its PTE. Pin it across
++			 * retry so its identifier cannot be recycled. Token zero is
++			 * a pure value and has no backing slot to pin.
++			 */
++			if (token && (!move_ref.slot || move_ref.token != token)) {
++				struct vm_fault vmf = {
++					.vma = src_vma,
++					.address = src_addr,
++					.pgoff = linear_page_index(src_vma, src_addr),
++					.pmd = src_pmd,
++					.orig_pte = orig_src_pte,
++				};
++				int resident;
++
++				pte_unmap(src_pte);
++				pte_unmap(dst_pte);
++				src_pte = dst_pte = NULL;
++				memcomp_entry_resident_put(&move_ref);
++				resident = memcomp_entry_resident_get(token, &move_ref);
++				if (resident < 0 || !move_ref.slot) {
++					err = resident < 0 ? resident : -EAGAIN;
++					goto out;
++				}
++				if (resident) {
++					/* Restore at the old rmap address before moving. */
++					err = memcomp_restore_resident(&vmf, &move_ref);
++					if (err)
++						goto out;
++				}
++				goto retry;
++			}
++		} else if (non_swap_entry(entry)) {
+ 			if (is_migration_entry(entry)) {
+ 				pte_unmap(&orig_src_pte);
+ 				pte_unmap(&orig_dst_pte);
+@@ -1227,6 +1269,7 @@ static int move_pages_pte(struct mm_struct *mm, pmd_t *dst_pmd, pmd_t *src_pmd,
+ 	}
+ 
+ out:
++	memcomp_entry_resident_put(&move_ref);
+ 	if (src_anon_vma) {
+ 		anon_vma_unlock_write(src_anon_vma);
+ 		put_anon_vma(src_anon_vma);
 diff --git a/mm/vmscan.c b/mm/vmscan.c
 index 20ce990bd..48b3fa1a7 100755
 --- a/mm/vmscan.c
