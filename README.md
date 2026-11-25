@@ -67,7 +67,7 @@ The script downloads Clang on first use and refreshes its source trees under `wo
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `MANIFEST` | `gt5pro` | Device label in the ZIP filename. The source repositories are fixed to the GT5 Pro. |
-| `CUSTOM_SUFFIX` | `android16-11-o-vYYYYMMDD` | Kernel release suffix and ZIP filename suffix, using the build date by default. |
+| `CUSTOM_SUFFIX` | `android14-11-o-vYYYYMMDD` | Kernel release suffix and ZIP filename suffix, using the build date by default. |
 | `APPLY_DROIDSPACES` | `y` | Set to `n` to skip the DroidSpaces kABI patch and its kernel configuration. |
 | `SKIP_DEPS` | `y` | Skip APT by default. Set to `n` to update the package index and install build dependencies with `sudo` before building. |
 

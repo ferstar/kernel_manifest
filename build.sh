@@ -25,7 +25,7 @@ cd "$WORKDIR"
 
 # 基础配置参数
 readonly MANIFEST=${MANIFEST:-gt5pro}
-readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-android16-11-o-v$(date +%Y%m%d)}
+readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-android14-11-o-v$(date +%Y%m%d)}
 readonly APPLY_MEMCOMP="y"
 APPLY_DROIDSPACES=${APPLY_DROIDSPACES:-y}
 readonly COMMON_REV="e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7"
