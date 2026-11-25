@@ -67,7 +67,7 @@ The script downloads Clang on first use and refreshes its source trees under `wo
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `MANIFEST` | `gt5pro` | Device label in the ZIP filename. The source repositories are fixed to the GT5 Pro. |
-| `CUSTOM_SUFFIX` | `android14-11-o-vYYYYMMDD` | Kernel release suffix and ZIP filename suffix, using the build date by default. |
+| `CUSTOM_SUFFIX` | `YYYYMMDD` | Trailing build tag appended to the fixed GKI 6.1 KMI prefix (`android14-11-o-v<CUSTOM_SUFFIX>`). |
 | `APPLY_DROIDSPACES` | `y` | Set to `n` to skip the DroidSpaces kABI patch and its kernel configuration. |
 | `SKIP_DEPS` | `y` | Skip APT by default. Set to `n` to update the package index and install build dependencies with `sudo` before building. |
 
@@ -76,7 +76,7 @@ The script downloads Clang on first use and refreshes its source trees under `wo
 | Artifact | Path |
 | --- | --- |
 | ARM64 kernel image | `workspace/kernel_ws/common/out/arch/arm64/boot/Image` |
-| AnyKernel3 ZIP containing that image | `workspace/kernel_ws/ak3-<MANIFEST>-<CUSTOM_SUFFIX>.zip` |
+| AnyKernel3 ZIP containing that image | `workspace/kernel_ws/ak3-<MANIFEST>-android14-11-o-v<CUSTOM_SUFFIX>.zip` |
 
 The GT5 Pro loads `oplus_bsp_schedinfo.ko` from the vendor ramdisk during early boot. The only build payload added to the AnyKernel3 ZIP is the kernel `Image`. To deploy the hot-thread fix in the device test, we packaged the rebuilt module separately in a matching `vendor_boot` image.
 

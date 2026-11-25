@@ -25,7 +25,9 @@ cd "$WORKDIR"
 
 # 基础配置参数
 readonly MANIFEST=${MANIFEST:-gt5pro}
-readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-android14-11-o-v$(date +%Y%m%d)}
+readonly KMI_PREFIX="android14-11-o"
+readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-$(date +%Y%m%d)}
+readonly KERNEL_SUFFIX="${KMI_PREFIX}${CUSTOM_SUFFIX}"
 readonly APPLY_MEMCOMP="y"
 APPLY_DROIDSPACES=${APPLY_DROIDSPACES:-y}
 readonly COMMON_REV="e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7"
@@ -35,7 +37,7 @@ readonly SKIP_DEPS=${SKIP_DEPS:-y}
 echo
 echo "============== 配置信息 =============="
 echo "适用机型          : $MANIFEST"
-echo "自定义内核后缀    : -$CUSTOM_SUFFIX"
+echo "自定义内核后缀    : -${KERNEL_SUFFIX}"
 echo "应用 DroidSpaces  : $APPLY_DROIDSPACES"
 echo "跳过依赖安装      : $SKIP_DEPS"
 echo "====================================="
@@ -139,7 +141,7 @@ rm -f common/android/abi_gki_protected_exports_*
 echo ">>> 处理版本字符串..."
 sed -i 's/ -dirty//g' common/scripts/setlocalversion
 sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
-sed -i "\$s|echo \"\\\$res\"|echo \"-${CUSTOM_SUFFIX}\"|" common/scripts/setlocalversion
+sed -i "\$s|echo \"\\\$res\"|echo \"-${KERNEL_SUFFIX}\"|" common/scripts/setlocalversion
 
 # 补丁应用
 echo ">>> 应用 patches 目录下的 lz4 / zstd 补丁..."
@@ -213,7 +215,7 @@ echo ">>> 禁用 defconfig 检查..."
 sed -i 's/check_defconfig//' ./common/build.config.gki
 
 echo ">>> 设置版本后缀..."
-sed -i "\$s|echo \"\\\$res\"|echo \"-${CUSTOM_SUFFIX}\"|" "./common/scripts/setlocalversion"
+sed -i "\$s|echo \"\\\$res\"|echo \"-${KERNEL_SUFFIX}\"|" "./common/scripts/setlocalversion"
 
 cd "$WORKDIR/kernel_ws/common"
 # 检测机器内存是否大于 16GB，如果是，则在`/tmp`目录创建一个`out`目录，软链接到`out`目录
@@ -273,7 +275,7 @@ cd "$WORKDIR/kernel_ws/AnyKernel3"
 sed -i -E 's/(kernel.string=).*/\1SukiSU by SukiSU Developers, compiled by ferstar with ♥️/' anykernel.sh
 
 # 生成发布包名称
-ZIP_NAME="ak3-${MANIFEST}-${CUSTOM_SUFFIX}"
+ZIP_NAME="ak3-${MANIFEST}-${KERNEL_SUFFIX}"
 
 # 添加功能标识
 ZIP_NAME="${ZIP_NAME}.zip"
