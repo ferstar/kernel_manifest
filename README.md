@@ -4,7 +4,7 @@
 
 ## 核心特性
 
-- **memcomp 内存压缩**：集成 6.1 回移植 + **LZ4 v1.11.1**（ARM64 高速解压优化）+ **Zstd** 回移植，支持运行时免重启热切算法：
+- **memcomp 内存压缩**：集成 6.1 回移植 + **LZ4 v1.11.1**（ARM64 高速解压优化）+ **Zstd v1.6.0** 回移植，支持运行时免重启热切算法：
   ```sh
   echo zstd > /sys/kernel/mm/memcomp/compressor   # 切回用 lz4
   ```
