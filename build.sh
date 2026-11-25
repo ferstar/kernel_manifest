@@ -185,6 +185,15 @@ EOF
 fi
 #####################################################################
 
+echo ">>> 配置 TCP BBR 默认拥塞控制..."
+cat <<'EOF' >> "$WORKDIR/kernel_ws/common/arch/arm64/configs/gki_defconfig"
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_BBR=y
+CONFIG_DEFAULT_TCP_CONG="bbr"
+CONFIG_NET_SCH_FQ=y
+EOF
+
 echo ">>> 配置内核选项..."
 DEFCONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
 
