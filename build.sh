@@ -25,7 +25,7 @@ cd "$WORKDIR"
 
 # 基础配置参数
 readonly MANIFEST=${MANIFEST:-gt5pro}
-readonly KMI_PREFIX="android14-11-o"
+readonly KMI_PREFIX="android14-11-o-v"
 readonly CUSTOM_SUFFIX=${CUSTOM_SUFFIX:-$(date +%Y%m%d)}
 readonly KERNEL_SUFFIX="${KMI_PREFIX}${CUSTOM_SUFFIX}"
 readonly APPLY_MEMCOMP="y"
