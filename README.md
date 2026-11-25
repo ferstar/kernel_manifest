@@ -1,101 +1,98 @@
-# Realme GT5 Pro (SM8650) Android 16 kernel
+# 真我 GT5 Pro（SM8650）Android 16 内核
 
-The `realme/sm8650_b` branch builds GKI 6.1.118 for the Realme GT5 Pro on Android 16 (Android B). It uses memcomp to compress anonymous pages in memory, with LZ4 as the default. Both zram and zswap are disabled in this build.
+`realme/sm8650_b` 分支用于为真我 GT5 Pro（RMX3888，Android 16 / Android B）构建 GKI `6.1.118` 内核。本分支使用 **memcomp** 替代传统的 `zram` / `zswap` 进行内存匿名页压缩，默认压缩算法为 **LZ4**。
 
-## What this branch builds
+## 本分支包含的改动
 
-- The build pins the Realme AndroidB common kernel to `e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7` and takes the vendor sources from their `master` branch.
-- The common kernel carries the memcomp backport, LZ4 v1.11.1 and a Zstd backport. DroidSpaces IPC, namespace and networking support is enabled by default.
-- The vendor patch removes a redundant slab constructor in `oplus_bsp_schedinfo`. Hot-thread nodes are still zeroed on allocation.
+- **上游源码**：`common` 固定在真我官方 AndroidB 源码 `e76bfb318e6c2abb2a888aa1a8cfa9488715d9b7`，`vendor` 跟踪官方 `master` 分支。
+- **内核特性**：集成 `memcomp` 6.1 回移植、**LZ4 v1.11.1**（带 ARM64 高速解压优化）、**Zstd** 回移植；默认开启 **DroidSpaces** 所需的 IPC / Namespace / 网络支持（kABI 安全）。
+- **Vendor 修复**：移除了 `oplus_bsp_schedinfo` 中多余的 slab constructor（热线程节点分配时仍正常清零），消除高负载下的 `new_slab` 告警。
 
-## Memcomp compression algorithm
+## 压缩算法在线切换（LZ4 / Zstd）
 
-Open **Memcomp Monitor → 内存** to see which compressor the kernel is using. On kernels with runtime selection, choose LZ4 or Zstd for new stores. Pages already in the pool keep their original codec until they are read back or released. The setting lasts until reboot. The v20261124 kernel shows the active codec read-only.
+打开 **Memcomp Monitor → 内存** 可查看当前压缩算法；在支持运行时切换的内核版本上，可以直接切换 **LZ4** 或 **Zstd**（无需重启）：新压入的页使用新算法，已在池中的页保留原解码器直到读回或释放，重启后恢复默认 `lz4`。
 
-A root shell can use the same interface. To select Zstd and read back the active codec, run the following. Use `lz4` to switch back.
+也可以在 root shell 中直接操作：
 
 ```sh
 echo zstd > /sys/kernel/mm/memcomp/compressor
 cat /sys/kernel/mm/memcomp/compressor
 ```
 
-## MGLRU on Oplus firmware
+（写 `lz4` 即可切回。）
 
-The RMX3888 boot script checks for an `Ezr:` line in `/proc/meminfo`.
-When memcomp is ready, patch 006 reports
-`Ezr: 0 kB (fake for Oplus MGLRU boot check)` so the script preserves
-the kernel's MGLRU setting. The marker reports zero bytes. On the
-tested firmware, `/sys/kernel/mm/lru_gen/enabled` read `0x0003` after boot.
+## MGLRU 开机保活
 
-On one RMX3888 running the same LZ4 kernel before patch 006, switching
-among ten commonly used apps in a fixed order gave the following Android
-framework foreground timings. Each app ran eight measured times per mode.
+RMX3888 原厂开机脚本会检查 `/proc/meminfo` 中是否存在 `Ezr:` 字段，缺失时会把 MGLRU 关掉。补丁 006 在 `memcomp` 就绪后输出 `Ezr: 0 kB (fake for Oplus MGLRU boot check)`，让开机脚本保留内核的 MGLRU 配置。实测开机后 `/sys/kernel/mm/lru_gen/enabled` 保持为 `0x0003`（仍支持通过 sysfs 手动修改）。
 
-| Metric | MGLRU off | MGLRU on |
-| --- | ---: | ---: |
-| Foreground P50 | 110 ms | 109 ms |
-| Foreground P95 | 185 ms | 155 ms |
-| Process or Activity reloads | 0/80 | 0/80 |
-| Warm repeat P95 (20 of the 80 returns per mode) | 156 ms | 150 ms |
+在同一台 RMX3888（LZ4 内核）上按固定顺序轮切 10 个常用 App（每种模式各测 80 次回前台，均为热切）：
 
-The warm repeat ran on then off. The smaller gap after warm-up limits
-how much of the pooled 30 ms difference can be attributed to MGLRU.
-The post-flash check on the released kernel verifies the boot setting.
+| 指标 | MGLRU 关 | MGLRU 开 | 变化 |
+| --- | ---: | ---: | --- |
+| 前台 P50 | 110 ms | 109 ms | -0.9% |
+| 前台 P95 | 185 ms | 155 ms | **-16.2%** |
+| 进程 / Activity 重载 | 0/80 | 0/80 | 持平 |
+| 充分预热终轮 P95（每模式后 20 次） | 156 ms | 150 ms | -3.8% |
 
-## Memcomp Monitor for KernelSU
+> 注：充分预热终轮按“先开后关”顺序执行，热身效应缩小了差距，因此全量 30 ms 的 P95 差值并非全部来自 MGLRU。
 
-Install the optional Memcomp Monitor ZIP in KernelSU to view pool usage and change the compressor. On a supported RMX3888 profile the module also disables the vendor swap and dynamic zram switches. The **驱动修复** page can back up, patch and restore the active slot's vendor ramdisk on unlocked devices with firmware `RMX3888_16.0.3.500`. Writing the partition requires a separate confirmation in the WebUI.
+## 配套 KernelSU 模块（Memcomp Monitor）
 
-See the [module guide](ksu/memcomp-monitor/README.txt) for device behavior and the [developer guide](ksu/memcomp-monitor/DEVELOPING.md) for packaging and offline checks.
+在 KernelSU 中刷入可选的 `ksu-gt5pro-memcomp-*.zip` 模块后：
 
-## Build
+- 可在 WebUI 中实时查看 `memcomp` 压缩池占用、在线切换 LZ4 / Zstd；
+- 在支持的 RMX3888 机型上自动禁用厂商主动 swap 与动态 zram 开关，避免和 `memcomp` 打架；
+- **驱动修复**页面支持在已解锁且固件为 `RMX3888_16.0.3.500` 的设备上备份、修补并恢复当前槽位的 `vendor_boot` ramdisk（写入分区前需要二次确认并做回读校验）。
 
-Use an x86-64 Linux host for the prebuilt Clang toolchain. On Debian or Ubuntu, run this from the repository root to install the build dependencies with APT and then build the kernel. The install step uses `sudo`.
+更多设备端说明见 [模块说明](ksu/memcomp-monitor/README.txt)，打包与离线检查见 [开发文档](ksu/memcomp-monitor/DEVELOPING.md)。
+
+## 编译方法
+
+需在 **x86-64 Linux** 主机上构建（使用预编译 Clang 工具链）。在 Debian / Ubuntu 上首次构建时运行（会调用 `sudo apt` 安装依赖）：
 
 ```bash
 SKIP_DEPS=n ./build.sh
 ```
 
-Once the host has the required packages, use the default build command.
+依赖装齐后，日常直接运行：
 
 ```bash
 ./build.sh
 ```
 
-The script downloads Clang on first use and refreshes its source trees under `workspace/`. It resets and cleans the common, vendor and AnyKernel3 checkouts on subsequent builds. On hosts with more than 16 GiB of RAM, it also recreates `/tmp/out`. Keep local changes outside the build trees and that directory.
+脚本首次运行会自动下载 Clang 并初始化 `workspace/`；后续构建会自动重置并清理 `workspace/` 下的 `common`、`vendor` 与 `AnyKernel3` 目录，并在内存大于 16 GiB 的机器上重建 `/tmp/out` 作为编译输出目录，请勿在这些目录里保留未提交的本地修改。
 
-| Variable | Default | Effect |
+| 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `MANIFEST` | `gt5pro` | Device label in the ZIP filename. The source repositories are fixed to the GT5 Pro. |
-| `CUSTOM_SUFFIX` | `YYYYMMDD` | Trailing build tag appended to the fixed GKI 6.1 KMI prefix (`android14-11-o-v<CUSTOM_SUFFIX>`). |
-| `APPLY_DROIDSPACES` | `y` | Set to `n` to skip the DroidSpaces kABI patch and its kernel configuration. |
-| `SKIP_DEPS` | `y` | Skip APT by default. Set to `n` to update the package index and install build dependencies with `sudo` before building. |
+| `MANIFEST` | `gt5pro` | 刷机包文件名里的机型标识（源码仓库固定为 GT5 Pro） |
+| `CUSTOM_SUFFIX` | `YYYYMMDD` | 附加在固定 GKI 6.1 KMI 前缀后的构建标签（`android14-11-o-v<CUSTOM_SUFFIX>`） |
+| `APPLY_DROIDSPACES` | `y` | 设为 `n` 可跳过 DroidSpaces kABI 补丁及对应内核配置 |
+| `SKIP_DEPS` | `y` | 默认跳过 `apt` 依赖安装；设为 `n` 在构建前通过 `sudo` 安装依赖 |
 
-## Build outputs
+## 编译产物
 
-| Artifact | Path |
+| 产物 | 路径 |
 | --- | --- |
-| ARM64 kernel image | `workspace/kernel_ws/common/out/arch/arm64/boot/Image` |
-| AnyKernel3 ZIP containing that image | `workspace/kernel_ws/ak3-<MANIFEST>-android14-11-o-v<CUSTOM_SUFFIX>.zip` |
+| ARM64 内核镜像 | `workspace/kernel_ws/common/out/arch/arm64/boot/Image` |
+| AnyKernel3 卡刷包 | `workspace/kernel_ws/ak3-<MANIFEST>-android14-11-o-v<CUSTOM_SUFFIX>.zip` |
 
-The GT5 Pro loads `oplus_bsp_schedinfo.ko` from the vendor ramdisk during early boot. The only build payload added to the AnyKernel3 ZIP is the kernel `Image`. To deploy the hot-thread fix in the device test, we packaged the rebuilt module separately in a matching `vendor_boot` image.
+> GT5 Pro 在早期启动阶段从 `vendor_boot` ramdisk 加载 `oplus_bsp_schedinfo.ko`，AnyKernel3 刷机包本身只包含内核 `Image`。如需应用热线程修复，请通过配套 KSU 模块的 **驱动修复** 页面或单独打包 `vendor_boot` 部署。
 
-## Validation
+## 测试与验证
 
-### DGX Spark benchmark
+### DGX Spark 原生 ARM64 KVM 对比
 
-On DGX Spark, an ARM64 KVM guest with 4 vCPUs and 1 GiB of RAM paged out 64 MiB and refaulted 4,096 pages per run. Both backends used LZ4. Each of the 10 pairs contained one zram run and one memcomp run, with the order alternating between pairs. The table gives the median of each per-run metric.
+在 DGX Spark 上使用 4 vCPU / 1 GiB RAM 的原生 ARM64 KVM 虚拟机，每轮压出 64 MiB 匿名页并随机缺页回读 4,096 页（双方均使用 LZ4，共 10 组交替配对，下表为各轮中位数）：
 
-| Metric | zram | memcomp |
-| --- | ---: | ---: |
-| First PAGEOUT (64 MiB) | 101.615 ms | 97.790 ms |
-| Refault latency P95 | 3.650 µs | 2.460 µs |
-| Refault latency P99 | 14.750 µs | 2.800 µs |
+| 指标 | zram | memcomp | 对比 |
+| --- | ---: | ---: | --- |
+| 首次 `MADV_PAGEOUT`（64 MiB） | 101.615 ms | 97.790 ms | 快 3.8% |
+| 单页缺页延迟 P95 | 3.650 µs | **2.460 µs** | **快 32.6%** |
+| 单页缺页延迟 P99 | 14.750 µs | **2.800 µs** | **快 5.3 倍** |
 
-### GT5 Pro device checks
+### GT5 Pro 真机验证
 
-Repeated `MADV_PAGEOUT` could stall for about 5.4 s while the kernel logged invalid swapfile lookups for compressed entries. After fixing the lookup, we compared one PAGEOUT call with two calls across 40 pairs on the phone. The second call took 38.281 µs at the median and 282.656 µs at most. The median within-pair difference in refault P95 was 0.0 µs. Neither test window logged `Bad swap file entry`.
+- **重复 `MADV_PAGEOUT` 修复**：修复前重复调用 `MADV_PAGEOUT` 会因对压缩条目做无效 swapfile 查询而卡顿约 5.4 s 并刷屏日志；修复后在真机跑 40 组对照，第二次 `PAGEOUT` 中位数耗时 **38.281 µs**（最大 282.656 µs），缺页 P95 组内中位差 `0.0 µs`，全程零 `Bad swap file entry`。
+- **Vendor 模块修复**：加载修补后的 `oplus_bsp_schedinfo.ko` 后，16 s 负载期间 `top_hotthread` 正常记录全部 8 核，内核日志无 `new_slab` 告警。
 
-With the patched vendor module loaded, `top_hotthread` recorded all eight CPU workers during a 16 s load. The kernel log showed no `new_slab` warning during that interval.
-
-[PR #4](https://github.com/ferstar/kernel_manifest/pull/4) records the full test conditions and regression results. The [module registry](.agents/MODULES.md) lists the patches and regression code.
+完整测试条件与回归记录见 [PR #4](https://github.com/ferstar/kernel_manifest/pull/4)，补丁与回归测试清单见 [模块索引](.agents/MODULES.md)。
